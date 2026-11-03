@@ -15,10 +15,18 @@ jobs:
           python-version: "3.12"
       # Fails (and publishes nothing) if YGOPRODeck and Konami's table disagree.
       - run: python build_lflist.py --out lflists/genesys.lflist.conf
+      # GitHub turns off scheduled workflows after 60 days without commits, so record a check monthly.
+      - name: Keep the schedule alive
+        run: |
+          if [ $(( $(date +%s) - $(git log -1 --format=%ct) )) -gt 2592000 ]; then
+            date -u +%Y-%m-%d > last-checked.txt
+          fi
       - name: Commit if changed
         run: |
-          if git diff --quiet; then echo "No changes."; exit 0; fi
+          git add -A
+          if git diff --cached --quiet; then echo "No changes."; exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "Update Genesys points"
+          if git diff --cached --quiet -- lflists; then msg="Genesys points unchanged (monthly check)"; else msg="Update Genesys points"; fi
+          git commit -m "$msg"
           git push
