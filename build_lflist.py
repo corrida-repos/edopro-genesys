@@ -5,9 +5,12 @@ Usage: python build_lflist.py [--out PATH] [--api-json FILE] [--official-html FI
 Line format (stock EDOPro reads "code count" and ignores the rest):
     14558127 3 18 # Ash Blossom & Joyous Spring
 Link and Pendulum monsters are listed with a copy count of 0, so EDOPro shows them as banned.
-Exits non-zero without writing anything when the two sources disagree.
+Exits non-zero without writing anything when the two sources disagree, except for one case:
+a card only YGOPRODeck lists is accepted while its TCG release is under NEW_CARD_GRACE_DAYS old,
+because Konami's page adds new sets' points a while after release. Such cards are marked in the file.
 """
 import argparse
+import datetime
 import html
 import json
 import os
@@ -21,6 +24,7 @@ OFFICIAL_URL = "https://www.yugioh-card.com/en/genesys/"
 USER_AGENT = "genesys-lflist/1.0 (+EDOPro banlist generator)"
 POINTS_LIMIT = 100
 MIN_ENTRIES = 200
+NEW_CARD_GRACE_DAYS = 45
 ALIASES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "name_aliases.json")
 
 
@@ -64,6 +68,16 @@ def card_points(card):
     return max((m.get("genesys_points", 0) or 0 for m in card.get("misc_info", [])), default=0)
 
 
+def tcg_date(card):
+    dates = []
+    for m in card.get("misc_info", []):
+        try:
+            dates.append(datetime.date.fromisoformat(m.get("tcg_date") or ""))
+        except ValueError:
+            pass
+    return min(dates, default=None)
+
+
 def is_forbidden(card):
     t = card.get("type", "")
     return "Link" in t or "Pendulum" in t
@@ -74,14 +88,22 @@ def load_aliases():
         return {normalize(k): normalize(v) for k, v in json.load(f).items() if not k.startswith("_")}
 
 
-def build(cards, official, aliases):
+def build(cards, official, aliases, today=None):
+    today = today or datetime.date.today()
     official = {aliases.get(name, name): value for name, value in official.items()}
     api = {normalize(c["name"]): card_points(c) for c in cards if card_points(c) > 0}
-    problems = []
+    released = {normalize(c["name"]): tcg_date(c) for c in cards}
+    problems, pending = [], set()
     for name in sorted(official.keys() - api.keys()):
         problems.append(f"only on Konami's page: {name} ({official[name]})")
     for name in sorted(api.keys() - official.keys()):
-        problems.append(f"only on YGOPRODeck: {name} ({api[name]})")
+        date = released.get(name)
+        if date and 0 <= (today - date).days < NEW_CARD_GRACE_DAYS:
+            pending.add(name)
+            print(f"Warning: only on YGOPRODeck, released {date}, using its points: {name} ({api[name]})",
+                  file=sys.stderr)
+        else:
+            problems.append(f"only on YGOPRODeck: {name} ({api[name]}, TCG release {date or 'unknown'})")
     for name in sorted(official.keys() & api.keys()):
         if official[name] != api[name]:
             problems.append(f"different points for {name}: Konami {official[name]}, YGOPRODeck {api[name]}")
@@ -98,8 +120,9 @@ def build(cards, official, aliases):
             if forbidden:
                 lines.append(f"{code} 0 # {card['name']} (Link/Pendulum)")
             else:
-                lines.append(f"{code} 3 {points} # {card['name']}")
-    return lines, len(api)
+                note = " (not yet on Konami's page)" if normalize(card["name"]) in pending else ""
+                lines.append(f"{code} 3 {points} # {card['name']}{note}")
+    return lines, len(api), len(pending)
 
 
 def main():
@@ -112,7 +135,7 @@ def main():
     api_text = open(args.api_json, encoding="utf-8").read() if args.api_json else fetch(API_URL)
     page = open(args.official_html, encoding="utf-8").read() if args.official_html else fetch(OFFICIAL_URL)
     try:
-        lines, count = build(json.loads(api_text)["data"], official_points(page), load_aliases())
+        lines, count, pending = build(json.loads(api_text)["data"], official_points(page), load_aliases())
     except ValueError as e:
         print(f"Not publishing: {e}", file=sys.stderr)
         return 1
@@ -120,7 +143,8 @@ def main():
     header = [
         "#[Genesys]",
         "# Generated from YGOPRODeck (https://ygoprodeck.com/api-guide/), checked against",
-        f"# Konami's official table ({OFFICIAL_URL}). {count} cards have points.",
+        f"# Konami's official table ({OFFICIAL_URL}). {count} cards have points"
+        + (f"; {pending} new cards are not on Konami's page yet." if pending else "."),
         "# Format: code copies points # name. Link and Pendulum monsters are banned (0 copies).",
         "!Genesys",
         f"$points_limit {POINTS_LIMIT}",

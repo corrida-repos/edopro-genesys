@@ -22,7 +22,7 @@ Points come from [Konami's official Genesys table](https://www.yugioh-card.com/e
 
 `lflists/genesys.lflist.conf` lists every card with Genesys points as `code 3 points # name`, alternate artworks included, and Link/Pendulum monsters with 0 copies. `$points_limit 100` is the cap. EDOPro reads only the copy count; the points window reads the points.
 
-`build_lflist.py` downloads YGOPRODeck's Genesys data (`cardinfo.php?format=genesys&misc=yes`, keyed by EDOPro card ID) and Konami's official table. It refuses to write the file if the two disagree on any card name or point value.
+`build_lflist.py` downloads YGOPRODeck's Genesys data (`cardinfo.php?format=genesys&misc=yes`, keyed by EDOPro card ID) and Konami's official table. It refuses to write the file if the two disagree on any card name or point value. The one exception: a card from a set released in the last 45 days that only YGOPRODeck lists yet is included with YGOPRODeck's points and marked `(not yet on Konami's page)`, because Konami adds new sets to its table a while after release.
 
 When Konami renames a card before YGOPRODeck does (or the reverse), the check fails. Confirm the two names are the same card, then add the pair to `name_aliases.json`.
 
